@@ -50,6 +50,7 @@ use task::{HideStrategy, Shell, SpawnInTerminal};
 use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
+use unicode_segmentation::UnicodeSegmentation;
 use urlencoding;
 use util::{paths::PathStyle, truncate_and_trailoff};
 
@@ -397,6 +398,7 @@ impl TerminalBuilder {
 
             selection_head: None,
             breadcrumb_text: String::new(),
+            state_icon: None,
             scroll_px: px(0.),
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
@@ -628,6 +630,7 @@ impl TerminalBuilder {
 
                 selection_head: None,
                 breadcrumb_text: String::new(),
+                state_icon: None,
                 scroll_px: px(0.),
                 next_link_id: 0,
                 selection_phase: SelectionPhase::Ended,
@@ -865,6 +868,7 @@ pub struct Terminal {
     pub selection_head: Option<AlacPoint>,
 
     pub breadcrumb_text: String,
+    state_icon: Option<String>,
     title_override: Option<String>,
     scroll_px: Pixels,
     next_link_id: usize,
@@ -953,11 +957,19 @@ impl Terminal {
                     }
                 }
 
+                // Single-grapheme titles are treated as state icon updates.
+                // Multi-grapheme titles (e.g. bash PROMPT_COMMAND's "user@host:cwd")
+                // do not touch state_icon, so Claude-hook icons stick across prompt redraws.
+                if UnicodeSegmentation::graphemes(title.as_str(), true).count() == 1 {
+                    self.state_icon = Some(title.clone());
+                }
+
                 self.breadcrumb_text = title;
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ResetTitle => {
                 self.breadcrumb_text = String::new();
+                // state_icon deliberately preserved — Claude hooks remain authoritative.
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
@@ -2164,54 +2176,50 @@ impl Terminal {
                     task_state.spawned_task.full_label.clone()
                 }
             }
-            None => self
-                .title_override
-                .as_ref()
-                .map(|title_override| title_override.to_string())
-                .or_else(|| {
-                    if self.breadcrumb_text.is_empty() {
-                        None
-                    } else if truncate {
-                        Some(truncate_and_trailoff(&self.breadcrumb_text, MAX_CHARS))
-                    } else {
-                        Some(self.breadcrumb_text.clone())
-                    }
-                })
-                .unwrap_or_else(|| match &self.terminal_type {
-                    TerminalType::Pty { info, .. } => info
-                        .current
-                        .read()
-                        .as_ref()
-                        .map(|fpi| {
-                            let process_file = fpi
-                                .cwd
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_default();
+            None => {
+                const UNKNOWN_ICON: &str = "❓";
+                let icon = self.state_icon.as_deref().unwrap_or(UNKNOWN_ICON);
+                let name = self
+                    .title_override
+                    .as_ref()
+                    .map(|t| t.to_string())
+                    .unwrap_or_else(|| match &self.terminal_type {
+                        TerminalType::Pty { info, .. } => info
+                            .current
+                            .read()
+                            .as_ref()
+                            .map(|fpi| {
+                                let process_file = fpi
+                                    .cwd
+                                    .file_name()
+                                    .map(|name| name.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
 
-                            let argv = fpi.argv.as_slice();
-                            let process_name = format!(
-                                "{}{}",
-                                fpi.name,
-                                if !argv.is_empty() {
-                                    format!(" {}", (argv[1..]).join(" "))
+                                let argv = fpi.argv.as_slice();
+                                let process_name = format!(
+                                    "{}{}",
+                                    fpi.name,
+                                    if !argv.is_empty() {
+                                        format!(" {}", (argv[1..]).join(" "))
+                                    } else {
+                                        "".to_string()
+                                    }
+                                );
+                                let (process_file, process_name) = if truncate {
+                                    (
+                                        truncate_and_trailoff(&process_file, MAX_CHARS),
+                                        truncate_and_trailoff(&process_name, MAX_CHARS),
+                                    )
                                 } else {
-                                    "".to_string()
-                                }
-                            );
-                            let (process_file, process_name) = if truncate {
-                                (
-                                    truncate_and_trailoff(&process_file, MAX_CHARS),
-                                    truncate_and_trailoff(&process_name, MAX_CHARS),
-                                )
-                            } else {
-                                (process_file, process_name)
-                            };
-                            format!("{process_file} — {process_name}")
-                        })
-                        .unwrap_or_else(|| "Terminal".to_string()),
-                    TerminalType::DisplayOnly => "Terminal".to_string(),
-                }),
+                                    (process_file, process_name)
+                                };
+                                format!("{process_file} — {process_name}")
+                            })
+                            .unwrap_or_else(|| "Terminal".to_string()),
+                        TerminalType::DisplayOnly => "Terminal".to_string(),
+                    });
+                format!("{icon} {name}")
+            }
         }
     }
 

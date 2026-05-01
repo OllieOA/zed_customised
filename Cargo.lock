@@ -17829,6 +17829,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "thiserror 2.0.17",
+ "unicode-segmentation",
  "url",
  "urlencoding",
  "util",
