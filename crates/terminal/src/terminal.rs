@@ -2168,6 +2168,15 @@ impl Terminal {
                 .title_override
                 .as_ref()
                 .map(|title_override| title_override.to_string())
+                .or_else(|| {
+                    if self.breadcrumb_text.is_empty() {
+                        None
+                    } else if truncate {
+                        Some(truncate_and_trailoff(&self.breadcrumb_text, MAX_CHARS))
+                    } else {
+                        Some(self.breadcrumb_text.clone())
+                    }
+                })
                 .unwrap_or_else(|| match &self.terminal_type {
                     TerminalType::Pty { info, .. } => info
                         .current
