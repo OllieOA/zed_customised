@@ -1380,6 +1380,17 @@ impl Item for TerminalView {
             None => (IconName::Terminal, Color::Muted, None),
         };
 
+        let state_icon = terminal.task().is_none().then(|| {
+            let c = terminal.state_icon().unwrap_or("?").to_string();
+            let color = match c.as_str() {
+                "!" => Color::Warning,
+                "$" => Color::Info,
+                ">" => Color::Hint,
+                _ => Color::Muted,
+            };
+            (c, color)
+        });
+
         let self_handle = self.self_handle.clone();
         h_flex()
             .gap_1()
@@ -1411,6 +1422,9 @@ impl Item for TerminalView {
                         )
                     }),
             )
+            .when_some(state_icon, |this, (c, color)| {
+                this.child(Label::new(c).color(color))
+            })
             .child(
                 div()
                     .relative()
