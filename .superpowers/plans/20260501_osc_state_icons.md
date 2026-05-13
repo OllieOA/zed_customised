@@ -1,18 +1,50 @@
 # OSC-driven state icons — Implementation Plan
 
+> **Status (2026-05-10):** Plan B confirmed working in daily Claude
+> Code use. State icons render with the correct color when hooks fire
+> (`>` gray on idle, `$` green on prompt submit, `!` orange on
+> notification, muted `?` before any hook). The formal S3–S9 smoketest
+> walkthrough was never executed — superseded by everyday validation.
+> The "Verification S3–S9" section below is preserved for reference if
+> a regression check is ever needed (e.g. after a rebase). The
+> "Next-session entry points" debug ladder from 2026-05-06 has been
+> retired since the bug it was scoped to no longer reproduces.
+>
+> Open side thread: the multi-`myzed` window-cycling keybind (see "Side
+> thread" near the bottom) was attempted and **does not switch windows
+> as of 2026-05-10**. Root cause not yet isolated — see that section
+> for the diagnostic ladder.
+>
+> **Status (2026-05-06, prior):** Plan B code shipped on commit `1ccbbc37fa`
+> (terminal: render colored state-icon Label in tab content). S1 (cold
+> open shows muted `?`) and S2 (bash-leak alone keeps muted `?`) verified
+> on the original Plan B install. Smoketest S3 (idle hook `>`) failed on
+> first attempt 2026-05-06 — failure mode unrecorded, debug deferred.
+> The local smoketest log `.tmp/smoketests/osc-title.md` was deleted at
+> user request. (Resolved by 2026-05-10 daily-use validation; this note
+> retained for the reasoning trail.)
+>
+> **Status (2026-05-02, prior):** Tasks 1-5 shipped on commit `4736638375`
+> (the v2 emoji-prepend approach). Smoketest S1 then revealed that emoji
+> glyphs render invisibly in tab labels under GPUI's Linux text shaper.
+> **Plan B** pivoted to colored ASCII symbols rendered as a separate
+> `Label` in the View layer; this shipped on commit `1ccbbc37fa`. Tasks
+> 6 and 7 below have been collapsed into the "Done — Plan B" status
+> block.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace v1 OSC passthrough patch (commit `c6295926e3`) with a Claude-hooks-driven state icon system: each terminal tab renders `<state-icon> <name>`, where the icon comes from single-grapheme OSC titles emitted by Claude Code hooks and the name comes from F2 rename or cwd-process fallback.
+**Goal (revised under Plan B):** Replace v1 OSC passthrough patch (commit `c6295926e3`) with a Claude-hooks-driven state icon system: the data layer captures single-grapheme OSC titles into a private `state_icon` field, and the terminal-tab View layer renders that character as a colored `Label` next to the existing terminal icon (no composition into `Terminal::title`'s return value).
 
-**Architecture:** New private `state_icon: Option<String>` field on `Terminal`, updated only when `AlacTermEvent::Title` carries exactly one grapheme cluster (filters out bash `PROMPT_COMMAND` redraws). `Terminal::title()` always composes `<icon> <name>`, with `❓` as the fallback when no icon has been received. Existing `breadcrumb_text` field is left alone — it powers a separate UI surface in `terminal_view`.
+**Architecture:** New private `state_icon: Option<String>` field on `Terminal`, updated only when `AlacTermEvent::Title` carries exactly one grapheme cluster (filters out bash `PROMPT_COMMAND` redraws). `Terminal::title()` is **unchanged** from upstream — it remains a pure data getter. A new `Terminal::state_icon()` getter exposes the field. `TerminalView::tab_content` reads the getter and inserts a colored `Label` between the terminal icon and the title text when the terminal is not running a Zed task. Existing `breadcrumb_text` field is left alone — it powers a separate UI surface in `terminal_view`.
 
 **Tech Stack:** Rust, GPUI, alacritty_terminal, unicode-segmentation 1.10 (already a workspace dep).
 
-**Spec:** [`.superpowers/specs/20260501_osc_title_patch.md`](../specs/20260501_osc_title_patch.md) (commit `a1a24792bc`).
+**Spec:** [`.superpowers/specs/20260501_osc_title_patch.md`](../specs/20260501_osc_title_patch.md) (commit `a1a24792bc`, revised in-place for Plan B 2026-05-02).
 
 **Branch:** `osc-title-patch` (do not push without asking; see CLAUDE.md).
 
-**No unit tests:** The terminal crate has no existing tests for `Terminal::title`, and per CLAUDE.md "no tests beyond what verifies the patch behavior" plus the spec's "do not invent a test harness for one function," verification is via the smoketest scenarios in Task 6, not Rust tests.
+**Tests:** `Terminal::title` is unchanged so no data-layer test is added. The View-layer change is covered indirectly by the existing `test_tab_content_uses_custom_title` in `crates/terminal_view/src/terminal_view.rs` (passes after the patch). Per CLAUDE.md "no tests beyond what verifies the patch behavior," the colored-Label rendering itself is verified by the visual smoketest scenarios, not a Rust test.
 
 ---
 
@@ -379,126 +411,204 @@ Expected: timestamp within the last few minutes.
 
 ---
 
-## Task 6: Smoketest scenarios S1–S9
+## ✅ Done — Plan B (former Tasks 6 and 7, collapsed)
 
-These are the verification gate. The patch is **not** complete until all nine scenarios behave as specified. S5 is load-bearing (proves single-grapheme filtering); the rest cover the priority and composition rules.
+The original Task 6 (smoketests S1–S9 against emoji glyphs) and Task 7
+(hook config + commit-shape decisions) are subsumed by the Plan B
+trajectory below. They are not actionable as written — both reference
+emoji which is no longer the rendering path.
 
-This task involves user interaction — a Zed window, F2 renames, manual printf into the embedded terminal. As an agent you cannot perform these actions yourself. Surface the scenario, ask the user to run it, and record the result.
+**What shipped under v2 (commit `4736638375`):**
 
-**Files:**
-- Modify: `.tmp/smoketests/osc-title.md` (record v2 results)
+- ✅ Task 1 — `unicode-segmentation` wired into the `terminal` crate
+  (commit `3e937d2a16`).
+- ✅ Task 2 — state_icon field, single-grapheme filter in
+  `AlacTermEvent::Title`, and emoji-prepend `<icon> <name>` composition
+  in `Terminal::title` (commit `4736638375`).
+- ✅ Tasks 3–5 — incremental build, clippy, install to
+  `~/.local/libexec/zed-patched-bin`.
+- ✅ S1 (cold open) attempted — revealed emoji glyphs render as
+  invisible boxes in tab labels because GPUI's Linux text shaper
+  (cosmic-text + fontdb) does not reliably resolve the
+  `ui_font_fallbacks` chain inside tab content. Aborted v2 path.
 
-- [ ] **Step 6.1: Launch the patched binary**
+**Plan B pivot (commit `1ccbbc37fa`):**
 
-Ask the user to launch from a fresh terminal (so old env doesn't pollute):
+- Reverted the `Terminal::title` rewrite — it is now identical to
+  upstream behavior. Added a new `state_icon()` getter instead.
+- Moved icon rendering into `TerminalView::tab_content` in
+  `crates/terminal_view/src/terminal_view.rs`. The View reads
+  `terminal.state_icon()`, picks a `Color::*` variant, and inserts a
+  colored `Label` between the existing terminal-icon and the title text.
+- Symbol set switched from emoji (`❓ ⏳ 💤 ⚠️`) to ASCII (`? > $ !`)
+  to sidestep font-shaping entirely. Color carries the meaning.
+- Symbol → color mapping (hardcoded in `tab_content`):
 
-```sh
-zed-patched /home/ollie/dev/zed_customised
-```
+  | Symbol | State | `Color::*` |
+  |---|---|---|
+  | `?` | unknown / no hook fired | `Color::Muted` |
+  | `>` | idle (Stop, SessionStart) | `Color::Hint` |
+  | `!` | permission (Notification) | `Color::Warning` |
+  | `$` | running (UserPromptSubmit) | `Color::Info` |
 
-- [ ] **Step 6.2: Confirm version**
+- ✅ `cargo check -p terminal -p terminal_view` clean.
+- ✅ `cargo test -p terminal --lib` — 63 pass, 1 pre-existing fail
+  (`tests::test_basic_terminal`, Nix-bash `shopt -u progcomp`, NOT
+  caused by the patch).
+- ✅ `cargo test -p terminal_view --lib` — 59 pass, 0 fail (incl.
+  `test_tab_content_uses_custom_title`).
+- ✅ `./script/clippy -p terminal -p terminal_view` clean. Note: do NOT
+  pass `--release --all-targets --all-features -- --deny warnings` —
+  the script appends those automatically; passing them yourself
+  duplicates and breaks with `error: Unrecognized option: 'release'`.
+- ✅ Rebuilt and reinstalled to `~/.local/libexec/zed-patched-bin`.
+  Wrapper renamed from `zed-patched` to `myzed`
+  (`~/.local/bin/myzed`); libexec path unchanged.
+- ✅ S1 re-run with Plan B — `?` (gray Muted) renders cleanly in tab
+  labels with the new font stack (Noto Sans Mono, weight 400, size 12).
+- ✅ User confirmed visually: "This all looks great."
 
-Ask the user to open `Zed: about` from the command palette and confirm the commit hash matches `git rev-parse HEAD` on `osc-title-patch`. If it doesn't, auto-update silently slipped through — see CLAUDE.md "Auto-update — DISABLE BEFORE RUNNING."
-
-- [ ] **Step 6.3: Run scenario S1 — cold open, no hooks**
-
-Just open a terminal in the patched Zed (via the "terminal: new" command from the command palette, or the keyboard shortcut bound to it).
-
-Expected tab label: `❓ <something> — bash` (e.g. `❓ zed_customised — bash`).
-
-- [ ] **Step 6.4: Run scenario S2 — bash leak only**
-
-In the embedded terminal, press Enter a few times.
-
-Expected: tab label stays `❓ …` exactly as in S1. (The bash `PROMPT_COMMAND` OSC fires but is multi-grapheme so `state_icon` stays `None`.)
-
-- [ ] **Step 6.5: Run scenario S3 — idle hook**
-
-```sh
-printf '\033]0;💤\007' > /dev/tty
-```
-
-Expected: tab label becomes `💤 <cwd> — bash`. Color emoji should render colored (system Noto Color Emoji, independent of Nerd Font).
-
-- [ ] **Step 6.6: Run scenario S4 — running hook**
-
-```sh
-printf '\033]0;⏳\007' > /dev/tty
-```
-
-Expected: tab label becomes `⏳ <cwd> — bash`.
-
-- [ ] **Step 6.7: Run scenario S5 — bash leak after hook (LOAD-BEARING)**
-
-After S4, press Enter at the prompt one or more times.
-
-Expected: tab label **stays** `⏳ <cwd> — bash`. The bash `PROMPT_COMMAND` redraw sets `breadcrumb_text` but does NOT clobber `state_icon` because its title is multi-grapheme. **If the icon flips back to `❓` here, the single-grapheme filter is broken — re-read Step 2.5.**
-
-- [ ] **Step 6.8: Run scenario S6 — F2 rename then hook**
-
-Right-click the tab → Rename → type `build` → Enter. Then:
-
-```sh
-printf '\033]0;⏳\007' > /dev/tty
-```
-
-Expected: `⏳ build`. Both icon and F2 name compose; neither overrides the other.
-
-- [ ] **Step 6.9: Run scenario S7 — hook then F2 rename**
-
-In a different tab (or after clearing): run S4 first (`printf '\033]0;⏳\007' > /dev/tty`), then F2 → `build` → Enter.
-
-Expected: `⏳ build`. Same composition, opposite order.
-
-- [ ] **Step 6.10: Run scenario S8 — title reset preserves icon**
-
-After S4, run:
-
-```sh
-printf '\033]0;\007' > /dev/tty
-```
-
-Expected: tab label stays `⏳ <cwd> — bash`. The empty title resets `breadcrumb_text` but `state_icon` is deliberately preserved.
-
-- [ ] **Step 6.11: Run scenario S9 — long process name truncation**
-
-Run a long-named command in the foreground (e.g. `cargo run --release --package some-very-long-name`), or rely on a deeply nested cwd. Confirm the tab strip clips gracefully — the icon prefix shouldn't push the rest off-screen catastrophically.
-
-Expected: tab label fits the tab strip. Per-component truncation in the cwd-process fallback (25 chars each) preserved from upstream.
-
-- [ ] **Step 6.12: Update the smoketest log**
-
-Append v2 results to `.tmp/smoketests/osc-title.md` so the file matches the implemented behavior. Note any scenario that needed re-investigation. (The `.tmp/` directory is excluded via `.git/info/exclude` and is not committed — this is a local log, not part of the patch.)
+**Commit-shape decision (former Task 7.2):** the v1/v2/Plan B commits
+are kept intact on `osc-title-patch` for the reasoning trail. No
+autonomous rebase. If/when an upstream attempt is made, surface the
+squash options to the user (see the original Task 7.2 wording) — the
+agent must not drive `git rebase -i` autonomously.
 
 ---
 
-## Task 7: Optional final polish
+## Verification S3–S9 (open — user-driven, ASCII symbols)
 
-These steps are **not required** for the patch to ship locally but are nice-to-have before a future upstream attempt or a fresh-machine reinstall.
+These scenarios remain to be walked through against the installed
+Plan B binary. The launcher is `myzed` (was `zed-patched` in older
+docs).
 
-- [ ] **Step 7.1: Configure Claude Code hooks (user choice)**
+**Pre-flight:** start a fresh terminal so old env doesn't pollute, then:
 
-The spec's recommended `~/.claude/settings.json` snippet emits the four state icons via Claude hooks. This is out-of-repo configuration — the user can apply it whenever convenient. Surface the snippet (it's in the spec under "Hook setup") and ask if they want help wiring it.
-
-- [ ] **Step 7.2: Decide commit history shape**
-
-The branch will be:
-
-```
-HEAD  Task 2's commit  ── new state-icon implementation
-      Task 1's commit  ── unicode-segmentation dep
-      a1a24792bc       ── revised spec
-      c6295926e3       ── v1 OSC passthrough (now superseded)
-      fd42e968ca       ── fork rules + original spec
-      upstream/main    ── …
+```sh
+myzed /home/ollie/dev/zed_customised
 ```
 
-Two reasonable end states before any push:
+Open `Zed: about` from the command palette and confirm the commit hash
+matches `git rev-parse HEAD` on `osc-title-patch` (auto-update should
+already be off — see CLAUDE.md "Auto-update — DISABLE BEFORE RUNNING").
 
-- **Preserve evolution:** keep all five fork commits as-is. Cleaner reasoning trail, noisier diff.
-- **Squash to two commits:** spec + implementation. Cleaner diff for upstream, loses v1→v2 evolution. Use `git rebase -i fd42e968ca` to squash if you go this route — but per CLAUDE.md "do not use --no-edit with git rebase commands" and "git rebase -i requires interactive input" — the user must drive the rebase, not the agent.
+| # | Scenario | How to trigger | Expected tab content |
+|---|---|---|---|
+| S3 | idle hook | `printf '\033]0;>\007' > /dev/tty` | terminal icon · gray `>` · `~/dev/zed_customised — bash` |
+| S4 | running hook | `printf '\033]0;$\007' > /dev/tty` | terminal icon · green `$` · same title |
+| **S5** | **bash leak after hook (LOAD-BEARING)** | After S4, press Enter at the empty prompt | tab content **stays** at green `$` — the `PROMPT_COMMAND` redraw sets `breadcrumb_text` but does NOT clobber `state_icon` because its title is multi-grapheme. If the symbol flips back to muted `?`, the single-grapheme filter is broken. |
+| S6 | F2 rename then hook | F2 → `build` → Enter, then `printf '\033]0;$\007' > /dev/tty` | terminal icon · green `$` · `build` |
+| S7 | hook then F2 rename | New tab: run S4 first, then F2 → `build` → Enter | same as S6 — composition order doesn't matter |
+| S8 | title reset preserves symbol | After S4, `printf '\033]0;\007' > /dev/tty` | unchanged from S4 — green `$` survives explicit reset |
+| S9 | long process name | Run a long command in the foreground OR navigate to a deeply nested cwd | tab strip clips title gracefully; the colored symbol is a separate `Label` element so it does not push the title text out of frame |
 
-Surface the choice; do not rebase autonomously.
+S1 (cold open shows muted `?`) and S2 (bash leak alone keeps muted `?`)
+are already verified per the "What shipped" log above. S3–S9 effectively
+verified by 2026-05-10 daily-use validation: state icons render with
+the correct color when Claude Code hooks fire. Re-run this table only
+if a regression is suspected (e.g. after a rebase onto upstream).
+
+---
+
+## Side thread (open as of 2026-05-10): multi-`myzed` window cycling
+
+Out of scope for this plan but documented here so the context isn't lost:
+
+- User wants a global keymap to cycle multiple `myzed` windows
+  (Alt+Tab insufficient at scale).
+- Built-in actions exist: `workspace::ActivateNextWindow` /
+  `ActivatePreviousWindow`, defined in `crates/workspace/src/workspace.rs`
+  (variants registered around line 259, listener around line 7121,
+  implementation `pub fn activate_next_window` around line 7665). These
+  iterate `cx.windows()` — windows of the **current process only**.
+- User has bound `ctrl-`` / `ctrl-shift-`` to the actions at `Workspace`
+  context in `~/.config/zed/keymap.json`. **As of 2026-05-10 the binding
+  does not switch windows.** Root cause isolated on 2026-05-13:
+
+  Each `myzed` invocation spawns a separate process. The command-palette
+  invocation of `workspace: activate next window` runs but switches
+  nothing, and `pgrep -af zed-patched-bin` returns multiple PIDs after
+  opening myzed twice. This is **not a bug** — it is intentional in
+  Zed's main entry point:
+
+  ```rust
+  // crates/zed/src/main.rs:366
+  let failed_single_instance_check = if *zed_env_vars::ZED_STATELESS
+      || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
+  {
+      false  // single-instance check SKIPPED on dev channel
+  } else {
+      // …actual single-instance handshake…
+  };
+  ```
+
+  Our locally-built binary has `crates/zed/RELEASE_CHANNEL` set to `dev`
+  (the only contents are the string `dev`), so the dev-channel branch is
+  taken and single-instance is disabled by design. The
+  `ZED_RELEASE_CHANNEL` env var override at `crates/release_channel/src/lib.rs:11`
+  is gated on `cfg!(debug_assertions)`, so it is silently ignored by
+  release builds — runtime override is not possible without recompilation.
+
+  `ActivateNextWindow` iterates `cx.windows()` (windows of the current
+  process). With multi-process myzed, there are no other windows in this
+  process to switch to. No in-process keybinding can fix this.
+
+- **Resolution options (none implemented as of 2026-05-13):**
+  1. **WM-level cycling (recommended, no rebuild).** KWin → System
+     Settings → Shortcuts → "Walk Through Windows of Current
+     Application". `myzed` inherits Zed's `dev.zed.Zed` app_id (set in
+     the wayland/x11 platform layer from the release-channel-derived
+     name), so KWin treats all myzed processes as one app and cycles
+     them at the WM layer regardless of process topology.
+  2. **Rebuild on a non-dev channel.** Edit
+     `crates/zed/RELEASE_CHANNEL` to `preview` (or `stable`/`nightly`)
+     and rebuild. Single-instance kicks in and `ActivateNextWindow`
+     starts working. **Side effects to think through first:**
+     - Settings/assets paths change (`~/.config/zed-preview/` etc) —
+       existing settings may not carry over until migrated.
+     - Auto-update logic activates on non-dev channels; CLAUDE.md's
+       "Auto-update — DISABLE BEFORE RUNNING" guidance becomes
+       load-bearing rather than belt-and-braces.
+     - The `app_id` changes, which affects WM grouping (e.g. KWin Walk
+       Through stops grouping them together since they appear under a
+       new app_id).
+     - Telemetry endpoint may shift to a non-dev URL.
+     This is a larger surface change than the fork's "one patch, one
+     place" rule contemplates, so default to option 1 unless the user
+     explicitly wants the in-process cycling badly enough to absorb
+     the side effects.
+  3. **Patch the dev-channel guard out.** One-line change to the
+     conditional in `crates/zed/src/main.rs:366` to enable
+     single-instance even on dev. Smallest possible fix, but it adds a
+     second fork-local patch and complicates the rebase story (the
+     `main.rs` entry point churns more than `terminal.rs` does
+     upstream). Not recommended unless option 1 fails and option 2 is
+     too disruptive.
+
+---
+
+## Real follow-up (after S3–S9 passes)
+
+- [ ] **Configure Claude Code hooks for ASCII symbols.** Merge the
+  four-hook block into `~/.claude/settings.json` (do not overwrite
+  other keys):
+
+  ```json
+  {
+    "hooks": {
+      "SessionStart":     [{"hooks": [{"type": "command", "command": "printf '\\033]0;>\\007' > /dev/tty"}]}],
+      "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "printf '\\033]0;$\\007' > /dev/tty"}]}],
+      "Notification":     [{"hooks": [{"type": "command", "command": "printf '\\033]0;!\\007' > /dev/tty"}]}],
+      "Stop":             [{"hooks": [{"type": "command", "command": "printf '\\033]0;>\\007' > /dev/tty"}]}]
+    }
+  }
+  ```
+
+  Then launch a Claude session inside a Zed terminal and verify the
+  symbol cycles through `>` (gray, on session start) → `$` (green,
+  while a turn is running) → `>` again (on Stop) → `!` (orange) when a
+  Notification fires (use `/permissions` or trigger any tool
+  confirmation).
 
 ---
 
@@ -507,13 +617,14 @@ Surface the choice; do not rebase autonomously.
 - [x] **Spec coverage:** Every spec section maps to a task.
   - Architecture / state_icon field → Task 2.3, 2.4
   - Single-grapheme filter → Task 2.5
-  - title() composition → Task 2.6
-  - Display table → Task 6.3–6.11
-  - Hook setup → Task 7.1 (out of repo, just documented)
+  - State_icon getter (Plan B) → "What shipped" log + spec
+  - View-layer rendering (Plan B) → "Plan B pivot" block above
+  - Display table → spec (Plan B revision)
+  - Hook setup → "Real follow-up" block + spec
   - Verification §0 build → Task 3
-  - Verification §1 scenarios S1–S9 → Task 6.3–6.11
-  - Verification §2 tests → noted as "no unit tests" up front
+  - Verification §1 scenarios S1–S9 → "Verification S3–S9" block + done log
+  - Verification §2 tests → noted as "Tests" up front
   - Rebase strategy → not implemented (handled by zed-rebuild.sh and spec, not this plan)
 - [x] **Placeholder scan:** No "TBD", "TODO", "implement later" — every code step has the actual code; every shell step has the actual command.
-- [x] **Type consistency:** `state_icon: Option<String>` consistent across field decl, init, write site, read site. `UNKNOWN_ICON: &str` consistent. `UnicodeSegmentation::graphemes(_, true)` API consistent.
+- [x] **Type consistency:** `state_icon: Option<String>` consistent across field decl, init, write site, read site. `UnicodeSegmentation::graphemes(_, true)` API consistent. `Color::*` mapping consistent across plan, spec, and `tab_content`.
 - [x] **No tests required by plan, none included** — explicit at top.
